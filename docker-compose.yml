@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aiqadam-postgres
+    restart: unless-stopped
+    ports:
+      - "54329:5432"
+    environment:
+      POSTGRES_DB: aiqadam
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - aiqadam_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aiqadam"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aiqadam-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # Хост-порт снаружи контейнера (внутри API всегда 8080). Если 8080 занят — задайте BACKEND_HOST_PORT=8081 в .env
+      - "${BACKEND_HOST_PORT:-8080}:8080"
+    environment:
+      PORT: "8080"
+      APP_ENV: development
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/aiqadam?sslmode=disable
+      AUTH_JWT_SECRET: change-me
+      AUTH_JWT_ISSUER: aiqadam-backend
+      # В APP_ENV=development CORS разрешает любой http://localhost:* (см. server.go)
+      CORS_ALLOWED_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost:3001
+      MIGRATIONS_PATH: /app/migrations
+      STORAGE_PATH: /app/storage
+      PUBLIC_API_URL: http://localhost:${BACKEND_HOST_PORT:-8080}
+    volumes:
+      - aiqadam_backend_storage:/app/storage
+
+volumes:
+  aiqadam_postgres_data:
+  aiqadam_backend_storage:

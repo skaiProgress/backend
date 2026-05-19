@@ -1,0 +1,33 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Go build
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+
+# Test & coverage
+*.test
+*.out
+coverage.html
+
+# Local file storage (uploads)
+/storage/
+
+# Logs
+*.log
+logs/
+
+# Editor / OS
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
