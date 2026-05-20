@@ -28,6 +28,8 @@ type Repository interface {
 	ListMyMaterials(ctx context.Context, userID, courseID string) ([]Material, error)
 	GetProfile(ctx context.Context, userID string) (*Profile, error)
 	UpdateFullName(ctx context.Context, userID, fullName string) error
+	GetCourseProgress(ctx context.Context, userID, courseID string) (*CourseProgress, error)
+	MarkTrainingComplete(ctx context.Context, userID, courseID string) error
 
 }
 
@@ -128,13 +130,26 @@ func (r *postgresRepository) ListMyLessons(ctx context.Context, userID, courseID
 	}
 
 	const q = `
-		SELECT l.id::text, l.title, l.description, l.youtube_url, l.youtube_video_id,
-		       l.order_index, l.is_free
+		SELECT l.id::text, l.title, l.description, l.video_source,
+		       l.youtube_url, l.youtube_video_id, l.video_url,
+		       l.order_index, l.is_free,
+		       EXISTS (SELECT 1 FROM public.lesson_quizzes qz WHERE qz.lesson_id = l.id) AS has_quiz,
+		       COALESCE((
+		           SELECT a.passed
+		           FROM public.lesson_quiz_attempts a
+		           WHERE a.user_id = $2::uuid AND a.lesson_id = l.id
+		           ORDER BY a.completed_at DESC
+		           LIMIT 1
+		       ), FALSE) AS quiz_passed,
+		       EXISTS (
+		           SELECT 1 FROM public.lesson_quiz_attempts a
+		           WHERE a.user_id = $2::uuid AND a.lesson_id = l.id
+		       ) AS quiz_submitted
 		FROM public.lessons l
 		WHERE l.course_id = $1::uuid
 		ORDER BY l.order_index ASC, l.created_at ASC
 	`
-	rows, err := r.pool.Query(ctx, q, courseID)
+	rows, err := r.pool.Query(ctx, q, courseID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list my lessons: %w", err)
 	}
@@ -144,8 +159,9 @@ func (r *postgresRepository) ListMyLessons(ctx context.Context, userID, courseID
 	for rows.Next() {
 		var l MyLesson
 		if err := rows.Scan(
-			&l.ID, &l.Title, &l.Description, &l.YoutubeURL, &l.YoutubeVideoID,
-			&l.OrderIndex, &l.IsFree,
+			&l.ID, &l.Title, &l.Description, &l.VideoSource,
+			&l.YoutubeURL, &l.YoutubeVideoID, &l.VideoURL,
+			&l.OrderIndex, &l.IsFree, &l.HasQuiz, &l.QuizPassed, &l.QuizSubmitted,
 		); err != nil {
 			return nil, err
 		}
@@ -201,6 +217,88 @@ func (r *postgresRepository) GetProfile(ctx context.Context, userID string) (*Pr
 		return nil, err
 	}
 	return &p, nil
+}
+
+func (r *postgresRepository) GetCourseProgress(ctx context.Context, userID, courseID string) (*CourseProgress, error) {
+	ok, err := r.hasAssignment(ctx, userID, courseID, true)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+
+	const q = `
+		SELECT
+			(SELECT COUNT(*)::int FROM public.lessons l
+			 WHERE l.course_id = $2::uuid
+			   AND EXISTS (SELECT 1 FROM public.lesson_quizzes qz WHERE qz.lesson_id = l.id)),
+			(SELECT COUNT(DISTINCT l.id)::int FROM public.lessons l
+			 JOIN public.lesson_quizzes qz ON qz.lesson_id = l.id
+			 JOIN public.lesson_quiz_attempts a ON a.lesson_id = l.id AND a.user_id = $1::uuid
+			 WHERE l.course_id = $2::uuid),
+			(SELECT COUNT(DISTINCT l.id)::int FROM public.lessons l
+			 JOIN public.lesson_quizzes qz ON qz.lesson_id = l.id
+			 JOIN public.lesson_quiz_attempts a ON a.lesson_id = l.id AND a.user_id = $1::uuid AND a.passed = TRUE
+			 WHERE l.course_id = $2::uuid),
+			ca.training_completed_at::text
+		FROM public.course_assignments ca
+		WHERE ca.user_id = $1::uuid
+		  AND ca.course_id = $2::uuid
+		  AND ca.status = 'active'
+	`
+	var totalQuiz, submitted, passed int
+	var completedAt *string
+	err = r.pool.QueryRow(ctx, q, userID, courseID).Scan(&totalQuiz, &submitted, &passed, &completedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	canComplete := totalQuiz > 0 && submitted >= totalQuiz
+	trainingDone := completedAt != nil && *completedAt != ""
+
+	return &CourseProgress{
+		TotalQuizLessons:     totalQuiz,
+		SubmittedQuizLessons: submitted,
+		PassedQuizLessons:    passed,
+		CanComplete:          canComplete,
+		TrainingCompleted:    trainingDone,
+		CompletedAt:          completedAt,
+	}, nil
+}
+
+func (r *postgresRepository) MarkTrainingComplete(ctx context.Context, userID, courseID string) error {
+	const q = `
+		UPDATE public.course_assignments
+		SET training_completed_at = NOW(), updated_at = NOW()
+		WHERE user_id = $1::uuid
+		  AND course_id = $2::uuid
+		  AND status = 'active'
+		  AND training_completed_at IS NULL
+	`
+	tag, err := r.pool.Exec(ctx, q, userID, courseID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// already completed — not an error
+		const q2 = `
+			SELECT 1 FROM public.course_assignments
+			WHERE user_id = $1::uuid AND course_id = $2::uuid
+			  AND status = 'active' AND training_completed_at IS NOT NULL
+		`
+		var one int
+		if err := r.pool.QueryRow(ctx, q2, userID, courseID).Scan(&one); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return pgx.ErrNoRows
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *postgresRepository) UpdateFullName(ctx context.Context, userID, fullName string) error {

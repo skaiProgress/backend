@@ -26,7 +26,8 @@ COPY --from=builder /app/bin/migrate /app/bin/migrate
 COPY migrations /app/migrations
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
-RUN chmod +x /app/docker-entrypoint.sh \
+RUN sed -i 's/\r$//' /app/docker-entrypoint.sh \
+    && chmod +x /app/docker-entrypoint.sh \
     && mkdir -p /app/storage \
     && chown -R appuser:appuser /app
 

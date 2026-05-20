@@ -25,6 +25,9 @@ func NewLocal(rootDir, publicBaseURL string) (*Local, error) {
 	if err := os.MkdirAll(filepath.Join(rootDir, "avatars"), 0o755); err != nil {
 		return nil, fmt.Errorf("create avatars dir: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Join(rootDir, "videos"), 0o755); err != nil {
+		return nil, fmt.Errorf("create videos dir: %w", err)
+	}
 	return &Local{
 		rootDir: rootDir,
 		baseURL: strings.TrimRight(publicBaseURL, "/"),
@@ -35,6 +38,31 @@ func NewLocal(rootDir, publicBaseURL string) (*Local, error) {
 func (s *Local) SaveMaterial(courseID, originalName string, r io.Reader) (publicURL, relPath string, err error) {
 	safeName := safeObjectName(originalName)
 	relPath = filepath.ToSlash(filepath.Join("materials", courseID, safeName))
+	absPath := filepath.Join(s.rootDir, relPath)
+
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		return "", "", err
+	}
+
+	f, err := os.Create(absPath)
+	if err != nil {
+		return "", "", err
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, r); err != nil {
+		_ = os.Remove(absPath)
+		return "", "", err
+	}
+
+	publicURL = fmt.Sprintf("%s/files/%s", s.baseURL, relPath)
+	return publicURL, relPath, nil
+}
+
+// SaveLessonVideo stores a lesson video file and returns public URL + relative path.
+func (s *Local) SaveLessonVideo(courseID, originalName string, r io.Reader) (publicURL, relPath string, err error) {
+	safeName := safeObjectName(originalName)
+	relPath = filepath.ToSlash(filepath.Join("videos", courseID, safeName))
 	absPath := filepath.Join(s.rootDir, relPath)
 
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {

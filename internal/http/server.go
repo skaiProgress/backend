@@ -28,7 +28,7 @@ func NewServer(cfg *config.Config, deps routes.Deps) *Server {
 
 	e.Use(middleware.Recover())
 	e.Use(middleware.Logger())
-	e.Use(middleware.BodyLimit("50M"))
+	e.Use(middleware.BodyLimit("1G"))
 	e.Static("/files", cfg.StoragePath)
 
 	corsConfig := middleware.CORSConfig{

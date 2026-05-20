@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"aiqadam-backend/internal/adminprofile"
+	"aiqadam-backend/internal/ai"
 	"aiqadam-backend/internal/assignments"
 	"aiqadam-backend/internal/auth"
+	"aiqadam-backend/internal/briefings"
 	"aiqadam-backend/internal/config"
 	"aiqadam-backend/internal/courses"
 	"aiqadam-backend/internal/database"
@@ -19,6 +21,9 @@ import (
 	"aiqadam-backend/internal/http/routes"
 	"aiqadam-backend/internal/lessons"
 	"aiqadam-backend/internal/materials"
+	"aiqadam-backend/internal/organizations"
+	"aiqadam-backend/internal/orgadmin"
+	"aiqadam-backend/internal/quizzes"
 	"aiqadam-backend/internal/storage"
 	"aiqadam-backend/internal/users"
 )
@@ -52,18 +57,22 @@ func main() {
 	usersService := users.NewService(usersRepo)
 	adminUsersHandler := users.NewHandler(usersService)
 
+	orgsRepo := organizations.NewRepository(pool)
+	orgsService := organizations.NewService(orgsRepo)
+	orgsHandler := organizations.NewHandler(orgsService)
+
 	coursesRepo := courses.NewRepository(pool)
 	coursesService := courses.NewService(coursesRepo)
 	coursesHandler := courses.NewHandler(coursesService)
-
-	lessonsRepo := lessons.NewRepository(pool)
-	lessonsService := lessons.NewService(lessonsRepo)
-	lessonsHandler := lessons.NewHandler(lessonsService)
 
 	fileStorage, err := storage.NewLocal(cfg.StoragePath, cfg.PublicAPIURL)
 	if err != nil {
 		log.Fatalf("storage: %v", err)
 	}
+
+	lessonsRepo := lessons.NewRepository(pool)
+	lessonsService := lessons.NewService(lessonsRepo, fileStorage)
+	lessonsHandler := lessons.NewHandler(lessonsService)
 
 	materialsRepo := materials.NewRepository(pool)
 	materialsService := materials.NewService(materialsRepo, fileStorage)
@@ -77,21 +86,44 @@ func main() {
 	employeeService := employee.NewService(employeeRepo)
 	employeeHandler := employee.NewHandler(employeeService)
 
+	aiRepo := ai.NewRepository(pool)
+	aiHandler := ai.NewHandler(aiRepo)
+	employeeService.SetAIRepository(aiRepo)
+
+	orgAdminRepo := orgadmin.NewRepository(pool)
+	orgAdminService := orgadmin.NewService(orgAdminRepo)
+	orgAdminHandler := orgadmin.NewHandler(orgAdminService)
+
+	briefingsRepo := briefings.NewRepository(pool)
+	briefingsService := briefings.NewService(briefingsRepo)
+	briefingsHandler := briefings.NewHandler(briefingsService)
+	// Wire briefing scheduler into orgadmin (after-construction injection to avoid import cycle)
+	orgAdminService.SetBriefingScheduler(briefingsService)
+
 	adminProfileRepo := adminprofile.NewRepository(pool)
 	adminProfileService := adminprofile.NewService(adminProfileRepo, fileStorage)
 	adminProfileHandler := adminprofile.NewHandler(adminProfileService)
 
+	quizzesRepo := quizzes.NewRepository(pool)
+	quizzesService := quizzes.NewService(quizzesRepo)
+	quizzesHandler := quizzes.NewHandler(quizzesService)
+
 	server := apphttp.NewServer(cfg, routes.Deps{
-		Health:      db,
-		Auth:        authHandler,
-		AuthService: authService,
-		AdminUsers:  adminUsersHandler,
-		Courses:     coursesHandler,
-		Lessons:     lessonsHandler,
-		Materials:   materialsHandler,
-		Assignments: assignmentsHandler,
-		Employee:     employeeHandler,
-		AdminProfile: adminProfileHandler,
+		Health:        db,
+		Auth:          authHandler,
+		AuthService:   authService,
+		AdminUsers:    adminUsersHandler,
+		Organizations: orgsHandler,
+		Courses:       coursesHandler,
+		Lessons:       lessonsHandler,
+		Materials:     materialsHandler,
+		Assignments:   assignmentsHandler,
+		Employee:      employeeHandler,
+		OrgAdmin:      orgAdminHandler,
+		AdminProfile:  adminProfileHandler,
+		Quizzes:       quizzesHandler,
+		Briefings:     briefingsHandler,
+		AI:            aiHandler,
 	})
 
 	go func() {

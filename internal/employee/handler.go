@@ -69,6 +69,27 @@ func (h *Handler) GetProfile(c echo.Context) error {
 	return c.JSON(http.StatusOK, item)
 }
 
+// GetCourseProgress handles GET /functions/v1/employee/courses/:courseId/progress
+func (h *Handler) GetCourseProgress(c echo.Context) error {
+	item, err := h.service.GetCourseProgress(c.Request().Context(), c.Param("courseId"))
+	if err != nil {
+		return mapError(c, err)
+	}
+	if item == nil {
+		return httputil.ErrorJSON(c, http.StatusNotFound, "course not found or access denied")
+	}
+	return c.JSON(http.StatusOK, item)
+}
+
+// CompleteTraining handles POST /functions/v1/employee/courses/:courseId/complete-training
+func (h *Handler) CompleteTraining(c echo.Context) error {
+	out, err := h.service.CompleteTraining(c.Request().Context(), c.Param("courseId"))
+	if err != nil {
+		return mapError(c, err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 // UpdateProfile handles PATCH /functions/v1/employee/profile.
 func (h *Handler) UpdateProfile(c echo.Context) error {
 	var req UpdateProfileRequest
@@ -90,7 +111,10 @@ func mapError(c echo.Context, err error) error {
 	case errors.Is(err, pgx.ErrNoRows):
 		return httputil.ErrorJSON(c, http.StatusNotFound, "not found")
 	default:
-		if err.Error() == "course_id is required" {
+		switch err.Error() {
+		case "course_id is required",
+			"сдайте все тесты по урокам, чтобы завершить обучение",
+			"AI module is not configured":
 			return httputil.ErrorJSON(c, http.StatusBadRequest, err.Error())
 		}
 		return httputil.ErrorJSON(c, http.StatusInternalServerError, err.Error())

@@ -3,22 +3,35 @@ package lessons
 import (
 	"context"
 	"errors"
+	"mime/multipart"
+	"path/filepath"
 	"strings"
 
 	"aiqadam-backend/internal/auth"
 	"aiqadam-backend/internal/pkg/youtube"
+	"aiqadam-backend/internal/storage"
 
 	"github.com/jackc/pgx/v5"
 )
 
+const maxVideoUploadBytes = 1 << 30 // 1 GiB
+
+var allowedVideoExtensions = map[string]struct{}{
+	".mp4":  {},
+	".webm": {},
+	".mov":  {},
+	".m4v":  {},
+}
+
 // Service handles lesson business logic.
 type Service struct {
-	repo Repository
+	repo  Repository
+	files *storage.Local
 }
 
 // NewService creates a lessons service.
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo Repository, files *storage.Local) *Service {
+	return &Service{repo: repo, files: files}
 }
 
 func (s *Service) requireAdmin(ctx context.Context) error {
@@ -74,22 +87,81 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Lesson, error
 	if order <= 0 {
 		order = 1
 	}
+	url := strings.TrimSpace(req.YoutubeURL)
 	return s.repo.Create(ctx, Lesson{
 		CourseID:       req.CourseID,
 		Title:          title,
 		Description:    req.Description,
-		YoutubeURL:     strings.TrimSpace(req.YoutubeURL),
-		YoutubeVideoID: videoID,
+		VideoSource:    VideoSourceYouTube,
+		YoutubeURL:     &url,
+		YoutubeVideoID: &videoID,
 		OrderIndex:     order,
 		IsFree:         req.IsFree,
 	})
 }
 
-// Update patches a lesson.
+// CreateFromMultipart adds a lesson with an uploaded video file.
+func (s *Service) CreateFromMultipart(ctx context.Context, req CreateUploadRequest, fh *multipart.FileHeader) (*Lesson, error) {
+	if err := s.requireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	title := strings.TrimSpace(req.Title)
+	if req.CourseID == "" || title == "" {
+		return nil, errors.New("course_id, title and video file are required")
+	}
+	if fh == nil {
+		return nil, errors.New("video file is required")
+	}
+	if err := validateVideoFile(fh.Filename, fh.Size); err != nil {
+		return nil, err
+	}
+
+	f, err := fh.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	publicURL, _, err := s.files.SaveLessonVideo(req.CourseID, fh.Filename, f)
+	if err != nil {
+		return nil, err
+	}
+
+	order := req.OrderIndex
+	if order <= 0 {
+		order = 1
+	}
+
+	row, err := s.repo.Create(ctx, Lesson{
+		CourseID:    req.CourseID,
+		Title:       title,
+		Description: req.Description,
+		VideoSource: VideoSourceUpload,
+		VideoURL:    &publicURL,
+		OrderIndex:  order,
+		IsFree:      req.IsFree,
+	})
+	if err != nil {
+		_ = s.files.Delete(s.files.RelPathFromPublicURL(publicURL))
+		return nil, err
+	}
+	return row, nil
+}
+
+// Update patches a YouTube lesson.
 func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*Lesson, error) {
 	if err := s.requireAdmin(ctx); err != nil {
 		return nil, err
 	}
+
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, pgx.ErrNoRows
+	}
+
 	fields := map[string]interface{}{}
 	if req.Title != nil {
 		t := strings.TrimSpace(*req.Title)
@@ -114,6 +186,8 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*Le
 			return nil, errors.New("invalid youtube url")
 		}
 		fields["youtube_video_id"] = vid
+		fields["video_source"] = VideoSourceYouTube
+		fields["video_url"] = nil
 	} else if req.YoutubeVideoID != nil {
 		fields["youtube_video_id"] = *req.YoutubeVideoID
 	}
@@ -130,13 +204,126 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*Le
 	if out == nil {
 		return nil, pgx.ErrNoRows
 	}
+
+	if req.YoutubeURL != nil &&
+		current.VideoSource == VideoSourceUpload &&
+		current.VideoURL != nil {
+		if rel := s.files.RelPathFromPublicURL(*current.VideoURL); rel != "" {
+			_ = s.files.Delete(rel)
+		}
+	}
 	return out, nil
 }
 
-// Delete removes a lesson.
+// UpdateFromMultipart patches lesson metadata and optionally replaces uploaded video.
+func (s *Service) UpdateFromMultipart(
+	ctx context.Context,
+	id string,
+	req UpdateUploadRequest,
+	fh *multipart.FileHeader,
+) (*Lesson, error) {
+	if err := s.requireAdmin(ctx); err != nil {
+		return nil, err
+	}
+
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, pgx.ErrNoRows
+	}
+
+	fields := map[string]interface{}{}
+	if req.Title != nil {
+		t := strings.TrimSpace(*req.Title)
+		if t == "" {
+			return nil, errors.New("title cannot be empty")
+		}
+		fields["title"] = t
+	}
+	if req.Description != nil {
+		fields["description"] = *req.Description
+	}
+	if req.OrderIndex != nil {
+		fields["order_index"] = *req.OrderIndex
+	}
+	if req.IsFree != nil {
+		fields["is_free"] = *req.IsFree
+	}
+
+	var oldVideoURL string
+	if fh != nil {
+		if err := validateVideoFile(fh.Filename, fh.Size); err != nil {
+			return nil, err
+		}
+		if current.VideoURL != nil {
+			oldVideoURL = *current.VideoURL
+		}
+
+		file, err := fh.Open()
+		if err != nil {
+			return nil, err
+		}
+		publicURL, _, err := s.files.SaveLessonVideo(current.CourseID, fh.Filename, file)
+		file.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		fields["video_source"] = VideoSourceUpload
+		fields["video_url"] = publicURL
+		fields["youtube_url"] = nil
+		fields["youtube_video_id"] = nil
+	}
+
+	if len(fields) == 0 {
+		return current, nil
+	}
+
+	out, err := s.repo.Update(ctx, id, fields)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return nil, pgx.ErrNoRows
+	}
+
+	if oldVideoURL != "" && out.VideoURL != nil && oldVideoURL != *out.VideoURL {
+		if rel := s.files.RelPathFromPublicURL(oldVideoURL); rel != "" {
+			_ = s.files.Delete(rel)
+		}
+	}
+	return out, nil
+}
+
+// Delete removes a lesson and its uploaded video file if present.
 func (s *Service) Delete(ctx context.Context, id string) error {
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}
+	row, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if row == nil {
+		return pgx.ErrNoRows
+	}
+	if row.VideoSource == VideoSourceUpload && row.VideoURL != nil {
+		if rel := s.files.RelPathFromPublicURL(*row.VideoURL); rel != "" {
+			_ = s.files.Delete(rel)
+		}
+	}
 	return s.repo.Delete(ctx, id)
+}
+
+func validateVideoFile(filename string, size int64) error {
+	ext := strings.ToLower(filepath.Ext(filename))
+	if _, ok := allowedVideoExtensions[ext]; !ok {
+		return errors.New("unsupported video format (allowed: mp4, webm, mov, m4v)")
+	}
+	if size <= 0 || size > maxVideoUploadBytes {
+		return errors.New("invalid video file size")
+	}
+	return nil
 }

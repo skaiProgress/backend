@@ -80,13 +80,38 @@ func (s *Service) AddUser(ctx context.Context, req AddUserRequest) (*AddUserResp
 		isActive = *req.IsActive
 	}
 
+	orgID := req.OrganizationID
+	if orgID != nil {
+		trimmed := strings.TrimSpace(*orgID)
+		if trimmed == "" {
+			orgID = nil
+		} else {
+			orgID = &trimmed
+		}
+	}
+
 	if role == "super_admin" {
 		return nil, ErrForbidden
 	}
 	if role == "admin" && caller.Role != "super_admin" {
 		return nil, errors.New("only super_admin can create admin users")
 	}
-	if role != "user" && role != "admin" {
+
+	if orgID != nil {
+		if caller.Role != "super_admin" {
+			return nil, errors.New("only super_admin can create organization users")
+		}
+		if role != "user" && role != "org_admin" {
+			return nil, errors.New("organization users must have role user or org_admin")
+		}
+		exists, err := s.repo.OrganizationExists(ctx, *orgID)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, errors.New("organization not found")
+		}
+	} else if role != "user" && role != "admin" {
 		return nil, ErrInvalidInput
 	}
 
@@ -100,7 +125,7 @@ func (s *Service) AddUser(ctx context.Context, req AddUserRequest) (*AddUserResp
 		return nil, err
 	}
 
-	if err := s.repo.UpsertProfile(ctx, userID, email, req.FullName, role, isActive); err != nil {
+	if err := s.repo.UpsertProfile(ctx, userID, email, req.FullName, role, isActive, orgID); err != nil {
 		return nil, err
 	}
 
@@ -122,7 +147,7 @@ func (s *Service) UpdateUser(ctx context.Context, req UpdateUserRequest) error {
 		if *req.Role == "super_admin" && caller.Role != "super_admin" {
 			return errors.New("only super_admin can grant super_admin role")
 		}
-		if *req.Role != "user" && *req.Role != "admin" && *req.Role != "super_admin" {
+		if *req.Role != "user" && *req.Role != "admin" && *req.Role != "super_admin" && *req.Role != "org_admin" {
 			return ErrInvalidInput
 		}
 	}

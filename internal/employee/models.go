@@ -30,10 +30,33 @@ type MyLesson struct {
 	ID             string  `json:"id"`
 	Title          string  `json:"title"`
 	Description    *string `json:"description"`
-	YoutubeURL     string  `json:"youtube_url"`
-	YoutubeVideoID string  `json:"youtube_video_id"`
+	VideoSource    string  `json:"video_source"`
+	YoutubeURL     *string `json:"youtube_url"`
+	YoutubeVideoID *string `json:"youtube_video_id"`
+	VideoURL       *string `json:"video_url"`
 	OrderIndex     int     `json:"order_index"`
 	IsFree         bool    `json:"is_free"`
+	HasQuiz        bool    `json:"has_quiz"`
+	QuizPassed     bool    `json:"quiz_passed"`
+	QuizSubmitted  bool    `json:"quiz_submitted"`
+}
+
+// CourseProgress is training completion status for a course.
+type CourseProgress struct {
+	TotalQuizLessons     int     `json:"total_quiz_lessons"`
+	SubmittedQuizLessons int     `json:"submitted_quiz_lessons"`
+	PassedQuizLessons    int     `json:"passed_quiz_lessons"`
+	CanComplete          bool    `json:"can_complete"`
+	TrainingCompleted    bool    `json:"training_completed"`
+	CompletedAt          *string `json:"completed_at,omitempty"`
+}
+
+// CompleteTrainingResult is returned after finishing training.
+type CompleteTrainingResult struct {
+	TrainingCompleted bool   `json:"training_completed"`
+	AnalyzedCount     int    `json:"analyzed_count"`
+	FailedCount       int    `json:"failed_count"`
+	Message           string `json:"message,omitempty"`
 }
 
 // Profile is the employee's own profile.

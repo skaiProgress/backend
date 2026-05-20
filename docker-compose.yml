@@ -40,6 +40,10 @@ services:
       MIGRATIONS_PATH: /app/migrations
       STORAGE_PATH: /app/storage
       PUBLIC_API_URL: http://localhost:${BACKEND_HOST_PORT:-8080}
+      # OpenAI для AI-аналитики (берётся из .env в папке backend)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-${OpenAI_API_KEY:-}}
+      OpenAI_API_KEY: ${OpenAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
     volumes:
       - aiqadam_backend_storage:/app/storage
 

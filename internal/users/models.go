@@ -4,11 +4,12 @@ import "time"
 
 // AddUserRequest is the body for POST /functions/v1/admin-add-user.
 type AddUserRequest struct {
-	Email    string  `json:"email"`
-	Password string  `json:"password"`
-	FullName *string `json:"full_name"`
-	Role     string  `json:"role"`
-	IsActive *bool   `json:"is_active"`
+	Email          string  `json:"email"`
+	Password       string  `json:"password"`
+	FullName       *string `json:"full_name"`
+	Role           string  `json:"role"`
+	IsActive       *bool   `json:"is_active"`
+	OrganizationID *string `json:"organization_id"`
 }
 
 // AddUserResponse is returned after creating a user.
@@ -49,11 +50,13 @@ type Caller struct {
 
 // Profile is an admin-visible user row from public.profiles.
 type Profile struct {
-	ID              string    `json:"id"`
-	Email           string    `json:"email"`
-	FullName        *string   `json:"full_name"`
-	Role            string    `json:"role"`
-	IsActive        bool      `json:"is_active"`
-	CreatedAt       time.Time `json:"created_at"`
-	AssignmentCount int       `json:"assignment_count"`
+	ID               string    `json:"id"`
+	Email            string    `json:"email"`
+	FullName         *string   `json:"full_name"`
+	Role             string    `json:"role"`
+	IsActive         bool      `json:"is_active"`
+	CreatedAt        time.Time `json:"created_at"`
+	AssignmentCount  int       `json:"assignment_count"`
+	OrganizationID   *string   `json:"organization_id,omitempty"`
+	OrganizationName *string   `json:"organization_name,omitempty"`
 }

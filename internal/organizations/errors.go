@@ -1,0 +1,11 @@
+package organizations
+
+import "errors"
+
+var (
+	ErrUnauthorized  = errors.New("unauthorized")
+	ErrForbidden     = errors.New("forbidden")
+	ErrInvalidInput  = errors.New("invalid input")
+	ErrNotFound      = errors.New("not found")
+	ErrEmailExists   = errors.New("email exists")
+)

@@ -13,6 +13,7 @@ import (
 // Repository persists lessons.
 type Repository interface {
 	ListByCourse(ctx context.Context, courseID string) ([]Lesson, error)
+	GetByID(ctx context.Context, id string) (*Lesson, error)
 	Create(ctx context.Context, l Lesson) (*Lesson, error)
 	Update(ctx context.Context, id string, fields map[string]interface{}) (*Lesson, error)
 	Delete(ctx context.Context, id string) error
@@ -28,14 +29,29 @@ func NewRepository(pool *pgxpool.Pool) Repository {
 	return &postgresRepository{pool: pool}
 }
 
+const lessonSelectCols = `
+	id::text, course_id::text, title, description, video_source,
+	youtube_url, youtube_video_id, video_url,
+	order_index, is_free, created_at, updated_at
+`
+
+func scanLesson(row pgx.Row) (Lesson, error) {
+	var l Lesson
+	err := row.Scan(
+		&l.ID, &l.CourseID, &l.Title, &l.Description, &l.VideoSource,
+		&l.YoutubeURL, &l.YoutubeVideoID, &l.VideoURL,
+		&l.OrderIndex, &l.IsFree, &l.CreatedAt, &l.UpdatedAt,
+	)
+	return l, err
+}
+
 func (r *postgresRepository) ListByCourse(ctx context.Context, courseID string) ([]Lesson, error) {
-	const q = `
-		SELECT id::text, course_id::text, title, description, youtube_url, youtube_video_id,
-		       order_index, is_free, created_at, updated_at
+	q := fmt.Sprintf(`
+		SELECT %s
 		FROM public.lessons
 		WHERE course_id = $1::uuid
 		ORDER BY order_index ASC, created_at ASC
-	`
+	`, lessonSelectCols)
 	rows, err := r.pool.Query(ctx, q, courseID)
 	if err != nil {
 		return nil, fmt.Errorf("list lessons: %w", err)
@@ -44,16 +60,25 @@ func (r *postgresRepository) ListByCourse(ctx context.Context, courseID string) 
 
 	out := make([]Lesson, 0)
 	for rows.Next() {
-		var l Lesson
-		if err := rows.Scan(
-			&l.ID, &l.CourseID, &l.Title, &l.Description, &l.YoutubeURL, &l.YoutubeVideoID,
-			&l.OrderIndex, &l.IsFree, &l.CreatedAt, &l.UpdatedAt,
-		); err != nil {
+		l, err := scanLesson(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+func (r *postgresRepository) GetByID(ctx context.Context, id string) (*Lesson, error) {
+	q := fmt.Sprintf(`SELECT %s FROM public.lessons WHERE id = $1::uuid`, lessonSelectCols)
+	l, err := scanLesson(r.pool.QueryRow(ctx, q, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &l, nil
 }
 
 func (r *postgresRepository) Reorder(ctx context.Context, courseID string, orderedIDs []string) error {
@@ -81,18 +106,17 @@ func (r *postgresRepository) Reorder(ctx context.Context, courseID string, order
 func (r *postgresRepository) Create(ctx context.Context, l Lesson) (*Lesson, error) {
 	const q = `
 		INSERT INTO public.lessons (
-			course_id, title, description, youtube_url, youtube_video_id, order_index, is_free
-		) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
-		RETURNING id::text, course_id::text, title, description, youtube_url, youtube_video_id,
-		          order_index, is_free, created_at, updated_at
-	`
-	var out Lesson
-	err := r.pool.QueryRow(ctx, q,
-		l.CourseID, l.Title, l.Description, l.YoutubeURL, l.YoutubeVideoID, l.OrderIndex, l.IsFree,
-	).Scan(
-		&out.ID, &out.CourseID, &out.Title, &out.Description, &out.YoutubeURL, &out.YoutubeVideoID,
-		&out.OrderIndex, &out.IsFree, &out.CreatedAt, &out.UpdatedAt,
+			course_id, title, description, video_source,
+			youtube_url, youtube_video_id, video_url,
+			order_index, is_free
+		) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING ` + lessonSelectCols
+	row := r.pool.QueryRow(ctx, q,
+		l.CourseID, l.Title, l.Description, l.VideoSource,
+		l.YoutubeURL, l.YoutubeVideoID, l.VideoURL,
+		l.OrderIndex, l.IsFree,
 	)
+	out, err := scanLesson(row)
 	if err != nil {
 		return nil, fmt.Errorf("create lesson: %w", err)
 	}
@@ -100,8 +124,8 @@ func (r *postgresRepository) Create(ctx context.Context, l Lesson) (*Lesson, err
 }
 
 func (r *postgresRepository) Update(ctx context.Context, id string, fields map[string]interface{}) (*Lesson, error) {
-	setParts := make([]string, 0, 8)
-	args := make([]interface{}, 0, 9)
+	setParts := make([]string, 0, 10)
+	args := make([]interface{}, 0, 11)
 	pos := 1
 	for col, val := range fields {
 		setParts = append(setParts, fmt.Sprintf("%s = $%d", col, pos))
@@ -109,21 +133,16 @@ func (r *postgresRepository) Update(ctx context.Context, id string, fields map[s
 		pos++
 	}
 	if len(setParts) == 0 {
-		return r.getByID(ctx, id)
+		return r.GetByID(ctx, id)
 	}
 	setParts = append(setParts, "updated_at = NOW()")
 	args = append(args, id)
 	q := fmt.Sprintf(`
 		UPDATE public.lessons SET %s WHERE id = $%d::uuid
-		RETURNING id::text, course_id::text, title, description, youtube_url, youtube_video_id,
-		          order_index, is_free, created_at, updated_at
-	`, strings.Join(setParts, ", "), pos)
+		RETURNING %s
+	`, strings.Join(setParts, ", "), pos, lessonSelectCols)
 
-	var out Lesson
-	err := r.pool.QueryRow(ctx, q, args...).Scan(
-		&out.ID, &out.CourseID, &out.Title, &out.Description, &out.YoutubeURL, &out.YoutubeVideoID,
-		&out.OrderIndex, &out.IsFree, &out.CreatedAt, &out.UpdatedAt,
-	)
+	out, err := scanLesson(r.pool.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -142,24 +161,4 @@ func (r *postgresRepository) Delete(ctx context.Context, id string) error {
 		return pgx.ErrNoRows
 	}
 	return nil
-}
-
-func (r *postgresRepository) getByID(ctx context.Context, id string) (*Lesson, error) {
-	const q = `
-		SELECT id::text, course_id::text, title, description, youtube_url, youtube_video_id,
-		       order_index, is_free, created_at, updated_at
-		FROM public.lessons WHERE id = $1::uuid
-	`
-	var out Lesson
-	err := r.pool.QueryRow(ctx, q, id).Scan(
-		&out.ID, &out.CourseID, &out.Title, &out.Description, &out.YoutubeURL, &out.YoutubeVideoID,
-		&out.OrderIndex, &out.IsFree, &out.CreatedAt, &out.UpdatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
 }

@@ -98,7 +98,11 @@ func mapServiceError(c echo.Context, err error) error {
 	default:
 		msg := err.Error()
 		switch msg {
-		case "only super_admin can create admin users", "only super_admin can grant super_admin role":
+		case "only super_admin can create admin users",
+			"only super_admin can grant super_admin role",
+			"only super_admin can create organization users",
+			"organization users must have role user or org_admin",
+			"organization not found":
 			return errorJSON(c, http.StatusForbidden, msg)
 		case "email and password are required",
 			"user_id is required",

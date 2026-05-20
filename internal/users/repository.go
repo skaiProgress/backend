@@ -16,7 +16,8 @@ import (
 type Repository interface {
 	FindProfileRole(ctx context.Context, userID string) (string, error)
 	CreateAuthUser(ctx context.Context, email, passwordHash string) (string, error)
-	UpsertProfile(ctx context.Context, userID, email string, fullName *string, role string, isActive bool) error
+	UpsertProfile(ctx context.Context, userID, email string, fullName *string, role string, isActive bool, organizationID *string) error
+	OrganizationExists(ctx context.Context, orgID string) (bool, error)
 	UpdatePassword(ctx context.Context, userID, passwordHash string) error
 	UpdateProfile(ctx context.Context, userID string, fullName *string, role *string, isActive *bool) error
 	DeleteAuthUsers(ctx context.Context, userIDs []string) error
@@ -74,24 +75,35 @@ func (r *postgresRepository) CreateAuthUser(ctx context.Context, email, password
 	return id, nil
 }
 
+func (r *postgresRepository) OrganizationExists(ctx context.Context, orgID string) (bool, error) {
+	const q = `SELECT EXISTS(SELECT 1 FROM public.organizations WHERE id = $1::uuid)`
+	var exists bool
+	if err := r.pool.QueryRow(ctx, q, orgID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("organization exists: %w", err)
+	}
+	return exists, nil
+}
+
 func (r *postgresRepository) UpsertProfile(
 	ctx context.Context,
 	userID, email string,
 	fullName *string,
 	role string,
 	isActive bool,
+	organizationID *string,
 ) error {
 	const q = `
-		INSERT INTO public.profiles (id, email, full_name, role, is_active)
-		VALUES ($1::uuid, $2, $3, $4, $5)
+		INSERT INTO public.profiles (id, email, full_name, role, is_active, organization_id)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6::uuid)
 		ON CONFLICT (id) DO UPDATE SET
 			email = EXCLUDED.email,
 			full_name = EXCLUDED.full_name,
 			role = EXCLUDED.role,
 			is_active = EXCLUDED.is_active,
+			organization_id = EXCLUDED.organization_id,
 			updated_at = NOW()
 	`
-	_, err := r.pool.Exec(ctx, q, userID, email, fullName, role, isActive)
+	_, err := r.pool.Exec(ctx, q, userID, email, fullName, role, isActive, organizationID)
 	if err != nil {
 		return fmt.Errorf("upsert profile: %w", err)
 	}
@@ -179,15 +191,17 @@ func (r *postgresRepository) DeleteAuthUsers(ctx context.Context, userIDs []stri
 func (r *postgresRepository) ListProfiles(ctx context.Context, search string) ([]Profile, error) {
 	const q = `
 		SELECT p.id::text, COALESCE(p.email, ''), p.full_name, p.role, p.is_active, p.created_at,
-		       COALESCE(COUNT(ca.id) FILTER (WHERE ca.status = 'active'), 0)::int
+		       COALESCE(COUNT(ca.id) FILTER (WHERE ca.status = 'active'), 0)::int,
+		       p.organization_id::text, o.name
 		FROM public.profiles p
 		LEFT JOIN public.course_assignments ca ON ca.user_id = p.id
+		LEFT JOIN public.organizations o ON o.id = p.organization_id
 		WHERE (
 			$1 = ''
 			OR p.email ILIKE '%' || $1 || '%'
 			OR p.full_name ILIKE '%' || $1 || '%'
 		)
-		GROUP BY p.id
+		GROUP BY p.id, p.organization_id, o.name
 		ORDER BY p.created_at DESC
 	`
 	rows, err := r.pool.Query(ctx, q, strings.TrimSpace(search))
@@ -201,6 +215,7 @@ func (r *postgresRepository) ListProfiles(ctx context.Context, search string) ([
 		var p Profile
 		if err := rows.Scan(
 			&p.ID, &p.Email, &p.FullName, &p.Role, &p.IsActive, &p.CreatedAt, &p.AssignmentCount,
+			&p.OrganizationID, &p.OrganizationName,
 		); err != nil {
 			return nil, err
 		}
@@ -215,13 +230,16 @@ func (r *postgresRepository) GetProfileByID(ctx context.Context, userID string) 
 		       COALESCE((
 		         SELECT COUNT(*)::int FROM public.course_assignments ca
 		         WHERE ca.user_id = p.id AND ca.status = 'active'
-		       ), 0)
+		       ), 0),
+		       p.organization_id::text, o.name
 		FROM public.profiles p
+		LEFT JOIN public.organizations o ON o.id = p.organization_id
 		WHERE p.id = $1::uuid
 	`
 	var p Profile
 	err := r.pool.QueryRow(ctx, q, userID).Scan(
 		&p.ID, &p.Email, &p.FullName, &p.Role, &p.IsActive, &p.CreatedAt, &p.AssignmentCount,
+		&p.OrganizationID, &p.OrganizationName,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
