@@ -14,6 +14,7 @@ import (
 	"aiqadam-backend/internal/auth"
 	"aiqadam-backend/internal/briefings"
 	"aiqadam-backend/internal/config"
+	"aiqadam-backend/internal/contactrequests"
 	"aiqadam-backend/internal/courses"
 	"aiqadam-backend/internal/database"
 	"aiqadam-backend/internal/employee"
@@ -100,6 +101,10 @@ func main() {
 	// Wire briefing scheduler into orgadmin (after-construction injection to avoid import cycle)
 	orgAdminService.SetBriefingScheduler(briefingsService)
 
+	contactRequestsRepo := contactrequests.NewRepository(pool)
+	contactRequestsService := contactrequests.NewService(contactRequestsRepo)
+	contactRequestsHandler := contactrequests.NewHandler(contactRequestsService)
+
 	adminProfileRepo := adminprofile.NewRepository(pool)
 	adminProfileService := adminprofile.NewService(adminProfileRepo, fileStorage)
 	adminProfileHandler := adminprofile.NewHandler(adminProfileService)
@@ -122,8 +127,9 @@ func main() {
 		OrgAdmin:      orgAdminHandler,
 		AdminProfile:  adminProfileHandler,
 		Quizzes:       quizzesHandler,
-		Briefings:     briefingsHandler,
-		AI:            aiHandler,
+		Briefings:       briefingsHandler,
+		ContactRequests: contactRequestsHandler,
+		AI:              aiHandler,
 	})
 
 	go func() {

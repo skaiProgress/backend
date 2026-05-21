@@ -10,6 +10,7 @@ import (
 	"aiqadam-backend/internal/assignments"
 	"aiqadam-backend/internal/auth"
 	"aiqadam-backend/internal/briefings"
+	"aiqadam-backend/internal/contactrequests"
 	"aiqadam-backend/internal/courses"
 	"aiqadam-backend/internal/employee"
 	appmiddleware "aiqadam-backend/internal/http/middleware"
@@ -43,8 +44,9 @@ type Deps struct {
 	OrgAdmin      *orgadmin.Handler
 	AdminProfile  *adminprofile.Handler
 	Quizzes       *quizzes.Handler
-	Briefings     *briefings.Handler
-	AI            *ai.Handler
+	Briefings       *briefings.Handler
+	ContactRequests *contactrequests.Handler
+	AI              *ai.Handler
 }
 
 // Register mounts all application routes on the Echo instance.
@@ -53,6 +55,7 @@ func Register(e *echo.Echo, deps Deps) {
 	e.GET("/healthz", healthHandler(deps.Health))
 
 	e.POST("/auth/login", deps.Auth.Login)
+	e.POST("/contact-requests", deps.ContactRequests.Create)
 
 	authGroup := e.Group("/functions/v1/auth")
 	authGroup.GET("/me", deps.Auth.Me, appmiddleware.JWT(deps.AuthService))
@@ -78,6 +81,11 @@ func Register(e *echo.Echo, deps Deps) {
 	adminFn.PATCH("/admin/organizations/:id", deps.Organizations.Update)
 	adminFn.DELETE("/admin/organizations/:id", deps.Organizations.Delete)
 	adminFn.POST("/admin/organizations/:id/users", deps.Organizations.AddMember)
+
+	adminFn.GET("/admin/contact-requests", deps.ContactRequests.List)
+	adminFn.GET("/admin/contact-requests/count/new", deps.ContactRequests.CountNew)
+	adminFn.GET("/admin/contact-requests/:id", deps.ContactRequests.Get)
+	adminFn.PATCH("/admin/contact-requests/:id", deps.ContactRequests.Update)
 
 	adminFn.GET("/courses", deps.Courses.List)
 	adminFn.POST("/courses", deps.Courses.Create)
