@@ -10,6 +10,7 @@ type Course struct {
 	Status      string    `json:"status"`
 	CoverURL    *string   `json:"cover_url"`
 	CreatedBy   *string   `json:"created_by"`
+	IsBriefingCourse bool  `json:"is_briefing_course"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -22,16 +23,18 @@ type CourseWithCount struct {
 
 // CreateRequest is POST /functions/v1/courses body.
 type CreateRequest struct {
-	Title       string  `json:"title"`
-	Description string  `json:"description"`
-	Status      string  `json:"status"`
-	CoverURL    *string `json:"cover_url"`
+	Title            string  `json:"title"`
+	Description      string  `json:"description"`
+	Status           string  `json:"status"`
+	CoverURL         *string `json:"cover_url"`
+	IsBriefingCourse *bool   `json:"is_briefing_course"`
 }
 
 // UpdateRequest is PATCH /functions/v1/courses/:id body.
 type UpdateRequest struct {
-	Title       *string `json:"title"`
-	Description *string `json:"description"`
-	Status      *string `json:"status"`
-	CoverURL    *string `json:"cover_url"`
+	Title            *string `json:"title"`
+	Description      *string `json:"description"`
+	Status           *string `json:"status"`
+	CoverURL         *string `json:"cover_url"`
+	IsBriefingCourse *bool   `json:"is_briefing_course"`
 }

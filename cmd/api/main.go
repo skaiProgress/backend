@@ -96,10 +96,8 @@ func main() {
 	orgAdminHandler := orgadmin.NewHandler(orgAdminService)
 
 	briefingsRepo := briefings.NewRepository(pool)
-	briefingsService := briefings.NewService(briefingsRepo)
+	briefingsService := briefings.NewService(briefingsRepo, fileStorage)
 	briefingsHandler := briefings.NewHandler(briefingsService)
-	// Wire briefing scheduler into orgadmin (after-construction injection to avoid import cycle)
-	orgAdminService.SetBriefingScheduler(briefingsService)
 
 	contactRequestsRepo := contactrequests.NewRepository(pool)
 	contactRequestsService := contactrequests.NewService(contactRequestsRepo)

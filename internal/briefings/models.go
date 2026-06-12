@@ -36,10 +36,12 @@ type OrgEvent struct {
 	ID             string       `json:"id"`
 	OrganizationID string       `json:"organization_id"`
 	EmployeeID     *string      `json:"employee_id,omitempty"`
+	CourseID       *string      `json:"course_id,omitempty"`
 	Title          string       `json:"title"`
 	EventType      string       `json:"type"`
 	BriefingKind   *string      `json:"briefing_kind,omitempty"`
 	StartsAt       time.Time    `json:"starts_at"`
+	EndsAt         *time.Time   `json:"ends_at,omitempty"`
 	Time           string       `json:"time"`
 	Location       string       `json:"location"`
 	Participants   *int         `json:"participants,omitempty"`
@@ -70,10 +72,12 @@ type BriefingRecord struct {
 type CreateEventInput struct {
 	OrganizationID string
 	EmployeeID     *string
+	CourseID       *string
 	Title          string
 	EventType      string
 	BriefingKind   *BriefingKind
 	StartsAt       time.Time
+	EndsAt         *time.Time
 	Location       string
 	Participants   *int
 	CreatedBy      *string
@@ -81,18 +85,42 @@ type CreateEventInput struct {
 
 // EmployeeBriefing is what an employee sees as a pending briefing.
 type EmployeeBriefing struct {
-	EventID      string    `json:"event_id"`
-	Title        string    `json:"title"`
-	BriefingKind string    `json:"briefing_kind"`
-	StartsAt     time.Time `json:"starts_at"`
-	Location     string    `json:"location"`
-	RecordID     *string   `json:"record_id,omitempty"`
-	Confirmed    bool      `json:"confirmed"`
+	EventID      string     `json:"event_id"`
+	Title        string     `json:"title"`
+	BriefingKind string     `json:"briefing_kind"`
+	StartsAt     time.Time  `json:"starts_at"`
+	EndsAt       *time.Time `json:"ends_at,omitempty"`
+	Location     string     `json:"location"`
+	RecordID     *string    `json:"record_id,omitempty"`
+	Confirmed    bool       `json:"confirmed"`
 }
 
-// ConfirmBriefingRequest is the body sent by employee to confirm a briefing.
-type ConfirmBriefingRequest struct {
-	Position string `json:"position"`
+// EmployeeBriefingDetail is the payload for the dedicated briefing page.
+type EmployeeBriefingDetail struct {
+	EventID      string     `json:"event_id"`
+	Title        string     `json:"title"`
+	BriefingKind string     `json:"briefing_kind"`
+	Location     string     `json:"location"`
+	StartsAt     time.Time  `json:"starts_at"`
+	EndsAt       *time.Time `json:"ends_at,omitempty"`
+	VideoURL     string     `json:"video_url"`
+	Confirmed    bool       `json:"confirmed"`
+	WindowActive bool       `json:"window_active"`
+	NotStarted   bool       `json:"not_started"`
+	Expired      bool       `json:"expired"`
+}
+
+// BriefingVideo is one uploaded video for a course/kind.
+type BriefingVideo struct {
+	BriefingKind string `json:"briefing_kind"`
+	VideoURL     string `json:"video_url"`
+}
+
+// BriefingCourse is a course an org-admin can use to create briefing links.
+type BriefingCourse struct {
+	CourseID string   `json:"course_id"`
+	Title    string   `json:"title"`
+	Kinds    []string `json:"kinds"` // briefing kinds that have a video
 }
 
 // UpdateEventRequest allows org-admin to change event date/time.
@@ -100,13 +128,12 @@ type UpdateEventRequest struct {
 	StartsAt string `json:"starts_at"` // RFC3339
 }
 
-// CreateBriefingEventRequest schedules a targeted or unscheduled briefing.
+// CreateBriefingEventRequest schedules any of the 5 briefing kinds tied to a course video.
 type CreateBriefingEventRequest struct {
 	EmployeeID   string `json:"employee_id"`
-	BriefingKind string `json:"briefing_kind"` // targeted | unscheduled
-	StartsAt     string `json:"starts_at"`     // RFC3339
+	CourseID     string `json:"course_id"`
+	BriefingKind string `json:"briefing_kind"` // any of the 5 kinds
+	StartsAt     string `json:"starts_at"`     // RFC3339, window start
+	EndsAt       string `json:"ends_at"`       // RFC3339, window end
 	Location     string `json:"location"`
 }
-
-// SignRecordRequest allows org-admin to sign a briefing record.
-type SignRecordRequest struct{}

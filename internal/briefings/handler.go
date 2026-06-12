@@ -8,6 +8,52 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
+// ── Admin: briefing videos ────────────────────────────────────────────────────
+
+// ListBriefingVideos GET /functions/v1/courses/:courseId/briefing-videos
+func (h *Handler) ListBriefingVideos(c echo.Context) error {
+	out, err := h.service.ListBriefingVideos(c.Request().Context(), c.Param("courseId"))
+	if err != nil {
+		return mapErr(c, err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+// UploadBriefingVideo POST /functions/v1/courses/:courseId/briefing-videos (multipart)
+func (h *Handler) UploadBriefingVideo(c echo.Context) error {
+	kind := c.FormValue("briefing_kind")
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		return errJSON(c, http.StatusBadRequest, "file is required")
+	}
+	src, err := fileHeader.Open()
+	if err != nil {
+		return errJSON(c, http.StatusBadRequest, "cannot open uploaded file")
+	}
+	defer src.Close()
+	if err := h.service.UploadBriefingVideo(c.Request().Context(), c.Param("courseId"), kind, fileHeader.Filename, src); err != nil {
+		return mapErr(c, err)
+	}
+	return c.NoContent(http.StatusCreated)
+}
+
+// DeleteBriefingVideo DELETE /functions/v1/courses/:courseId/briefing-videos/:kind
+func (h *Handler) DeleteBriefingVideo(c echo.Context) error {
+	if err := h.service.DeleteBriefingVideo(c.Request().Context(), c.Param("courseId"), c.Param("kind")); err != nil {
+		return mapErr(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// ListBriefingCourses GET /functions/v1/org-admin/briefing-courses
+func (h *Handler) ListBriefingCourses(c echo.Context) error {
+	out, err := h.service.ListBriefingCourses(c.Request().Context())
+	if err != nil {
+		return mapErr(c, err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 // Handler exposes briefing HTTP endpoints.
 type Handler struct {
 	service *Service
@@ -99,11 +145,18 @@ func (h *Handler) ListEmployeeBriefings(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
-// ConfirmBriefing POST /functions/v1/employee/briefings/:eventId/confirm
-func (h *Handler) ConfirmBriefing(c echo.Context) error {
-	var req ConfirmBriefingRequest
-	_ = c.Bind(&req)
-	if err := h.service.ConfirmBriefing(c.Request().Context(), c.Param("eventId"), req); err != nil {
+// GetEmployeeBriefing GET /functions/v1/employee/briefings/:eventId
+func (h *Handler) GetEmployeeBriefing(c echo.Context) error {
+	out, err := h.service.GetEmployeeBriefingDetail(c.Request().Context(), c.Param("eventId"))
+	if err != nil {
+		return mapErr(c, err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+// CompleteBriefing POST /functions/v1/employee/briefings/:eventId/complete
+func (h *Handler) CompleteBriefing(c echo.Context) error {
+	if err := h.service.CompleteBriefing(c.Request().Context(), c.Param("eventId")); err != nil {
 		return mapErr(c, err)
 	}
 	return c.NoContent(http.StatusNoContent)
@@ -133,12 +186,22 @@ func mapErr(c echo.Context, err error) error {
 		switch msg {
 		case "unauthorized":
 			return errJSON(c, http.StatusUnauthorized, msg)
+		case "forbidden":
+			return errJSON(c, http.StatusForbidden, msg)
 		case "briefing already confirmed",
 			"event has no briefing kind",
 			"invalid starts_at, use RFC3339 format",
+			"invalid ends_at, use RFC3339 format",
+			"ends_at must be after starts_at",
 			"record not found or already signed",
 			"employee_id is required",
-			"briefing_kind must be targeted or unscheduled",
+			"course_id is required",
+			"invalid briefing_kind",
+			"course not available",
+			"course is not a briefing course",
+			"no video for this briefing kind",
+			"briefing window not started",
+			"briefing window expired",
 			"employee not in organization":
 			return errJSON(c, http.StatusBadRequest, msg)
 		case "event not found",

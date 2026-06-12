@@ -16,6 +16,7 @@ type Repository interface {
 	CreateEvent(ctx context.Context, in CreateEventInput) (*OrgEvent, error)
 	ListOrgEvents(ctx context.Context, orgID string) ([]OrgEvent, error)
 	ListEmployeeEvents(ctx context.Context, employeeID, orgID string) ([]OrgEvent, error)
+	GetEvent(ctx context.Context, eventID string) (*OrgEvent, error)
 	UpdateEventTime(ctx context.Context, eventID, orgID string, startsAt time.Time) error
 
 	// Briefing records
@@ -27,13 +28,24 @@ type Repository interface {
 	InstructorSignRecord(ctx context.Context, recordID, orgID string) error
 	DeleteOrgRecord(ctx context.Context, recordID, orgID string) error
 
+	// Briefing videos (super admin)
+	UpsertBriefingVideo(ctx context.Context, courseID, kind, videoURL, videoPath string) error
+	ListBriefingVideosByCourse(ctx context.Context, courseID string) ([]BriefingVideo, error)
+	GetBriefingVideo(ctx context.Context, courseID, kind string) (string, error)
+	DeleteBriefingVideo(ctx context.Context, courseID, kind string) (videoPath string, err error)
+	SetCourseBriefingFlag(ctx context.Context, courseID string, value bool) error
+
 	// Helpers
 	GetOrgIDByEmployee(ctx context.Context, employeeID string) (string, error)
 	GetEmployeeProfile(ctx context.Context, employeeID string) (email string, fullName *string, err error)
+	GetEmployeePosition(ctx context.Context, employeeID string) (string, error)
 	GetOrgAdminProfile(ctx context.Context, orgAdminID string) (email string, fullName *string, err error)
 	HasRecordForKind(ctx context.Context, employeeID string, kind BriefingKind) (bool, error)
 	GetOrgIDByAdmin(ctx context.Context, orgAdminID string) (string, error)
 	EmployeeInOrg(ctx context.Context, orgID, employeeID string) (bool, error)
+	OrgAdminHasCourse(ctx context.Context, orgAdminID, courseID string) (bool, error)
+	CourseIsBriefing(ctx context.Context, courseID string) (bool, error)
+	ListBriefingCoursesForOrgAdmin(ctx context.Context, orgAdminID string) ([]BriefingCourse, error)
 }
 
 type postgresRepository struct {
@@ -53,32 +65,34 @@ func (r *postgresRepository) CreateEvent(ctx context.Context, in CreateEventInpu
 	}
 	const q = `
 		INSERT INTO public.org_events
-			(organization_id, employee_id, title, event_type, briefing_kind, starts_at, location, participants, created_by)
-		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::uuid)
-		RETURNING id::text, organization_id::text, employee_id::text, title, event_type, briefing_kind,
-		          starts_at, location, participants, created_at
+			(organization_id, employee_id, course_id, title, event_type, briefing_kind, starts_at, ends_at, location, participants, created_by)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11::uuid)
+		RETURNING id::text, organization_id::text, employee_id::text, course_id::text, title, event_type, briefing_kind,
+		          starts_at, ends_at, location, participants, created_at
 	`
 	var ev OrgEvent
 	var empID *string
+	var courseID *string
 	err := r.pool.QueryRow(ctx, q,
-		in.OrganizationID, in.EmployeeID, in.Title, in.EventType, bk,
-		in.StartsAt, in.Location, in.Participants, in.CreatedBy,
+		in.OrganizationID, in.EmployeeID, in.CourseID, in.Title, in.EventType, bk,
+		in.StartsAt, in.EndsAt, in.Location, in.Participants, in.CreatedBy,
 	).Scan(
-		&ev.ID, &ev.OrganizationID, &empID, &ev.Title, &ev.EventType, &ev.BriefingKind,
-		&ev.StartsAt, &ev.Location, &ev.Participants, &ev.CreatedAt,
+		&ev.ID, &ev.OrganizationID, &empID, &courseID, &ev.Title, &ev.EventType, &ev.BriefingKind,
+		&ev.StartsAt, &ev.EndsAt, &ev.Location, &ev.Participants, &ev.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create event: %w", err)
 	}
 	ev.EmployeeID = empID
+	ev.CourseID = courseID
 	ev.Time = ev.StartsAt.Format("15:04")
 	return &ev, nil
 }
 
 func (r *postgresRepository) ListOrgEvents(ctx context.Context, orgID string) ([]OrgEvent, error) {
 	const q = `
-		SELECT id::text, organization_id::text, employee_id::text, title, event_type,
-		       briefing_kind, starts_at, location, participants, created_at
+		SELECT id::text, organization_id::text, employee_id::text, course_id::text, title, event_type,
+		       briefing_kind, starts_at, ends_at, location, participants, created_at
 		FROM public.org_events
 		WHERE organization_id = $1::uuid
 		ORDER BY starts_at ASC
@@ -88,8 +102,8 @@ func (r *postgresRepository) ListOrgEvents(ctx context.Context, orgID string) ([
 
 func (r *postgresRepository) ListEmployeeEvents(ctx context.Context, employeeID, orgID string) ([]OrgEvent, error) {
 	const q = `
-		SELECT id::text, organization_id::text, employee_id::text, title, event_type,
-		       briefing_kind, starts_at, location, participants, created_at
+		SELECT id::text, organization_id::text, employee_id::text, course_id::text, title, event_type,
+		       briefing_kind, starts_at, ends_at, location, participants, created_at
 		FROM public.org_events
 		WHERE organization_id = $1::uuid
 		  AND (employee_id = $2::uuid OR employee_id IS NULL)
@@ -101,6 +115,28 @@ func (r *postgresRepository) ListEmployeeEvents(ctx context.Context, employeeID,
 	}
 	defer rows.Close()
 	return scanEventRows(rows)
+}
+
+func (r *postgresRepository) GetEvent(ctx context.Context, eventID string) (*OrgEvent, error) {
+	const q = `
+		SELECT id::text, organization_id::text, employee_id::text, course_id::text, title, event_type,
+		       briefing_kind, starts_at, ends_at, location, participants, created_at
+		FROM public.org_events
+		WHERE id = $1::uuid
+	`
+	rows, err := r.pool.Query(ctx, q, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("get event: %w", err)
+	}
+	defer rows.Close()
+	evs, err := scanEventRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(evs) == 0 {
+		return nil, pgx.ErrNoRows
+	}
+	return &evs[0], nil
 }
 
 func (r *postgresRepository) UpdateEventTime(ctx context.Context, eventID, orgID string, startsAt time.Time) error {
@@ -310,6 +346,16 @@ func (r *postgresRepository) GetEmployeeProfile(ctx context.Context, employeeID 
 	return email, fullName, err
 }
 
+func (r *postgresRepository) GetEmployeePosition(ctx context.Context, employeeID string) (string, error) {
+	const q = `SELECT COALESCE(position,'') FROM public.profiles WHERE id = $1::uuid`
+	var position string
+	err := r.pool.QueryRow(ctx, q, employeeID).Scan(&position)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return position, err
+}
+
 func (r *postgresRepository) GetOrgAdminProfile(ctx context.Context, orgAdminID string) (string, *string, error) {
 	const q = `SELECT COALESCE(email,''), full_name FROM public.profiles WHERE id = $1::uuid AND role = 'org_admin'`
 	var email string
@@ -359,15 +405,138 @@ func scanEventRows(rows pgx.Rows) ([]OrgEvent, error) {
 	for rows.Next() {
 		var ev OrgEvent
 		var empID *string
+		var courseID *string
 		if err := rows.Scan(
-			&ev.ID, &ev.OrganizationID, &empID, &ev.Title, &ev.EventType,
-			&ev.BriefingKind, &ev.StartsAt, &ev.Location, &ev.Participants, &ev.CreatedAt,
+			&ev.ID, &ev.OrganizationID, &empID, &courseID, &ev.Title, &ev.EventType,
+			&ev.BriefingKind, &ev.StartsAt, &ev.EndsAt, &ev.Location, &ev.Participants, &ev.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
 		ev.EmployeeID = empID
+		ev.CourseID = courseID
 		ev.Time = ev.StartsAt.Format("15:04")
 		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
+// ── briefing videos & course helpers ──────────────────────────────────────────
+
+func (r *postgresRepository) UpsertBriefingVideo(ctx context.Context, courseID, kind, videoURL, videoPath string) error {
+	const q = `
+		INSERT INTO public.briefing_videos (course_id, briefing_kind, video_url, video_path)
+		VALUES ($1::uuid, $2, $3, $4)
+		ON CONFLICT (course_id, briefing_kind)
+		DO UPDATE SET video_url = EXCLUDED.video_url, video_path = EXCLUDED.video_path, updated_at = NOW()
+	`
+	_, err := r.pool.Exec(ctx, q, courseID, kind, videoURL, videoPath)
+	if err != nil {
+		return fmt.Errorf("upsert briefing video: %w", err)
+	}
+	return nil
+}
+
+func (r *postgresRepository) ListBriefingVideosByCourse(ctx context.Context, courseID string) ([]BriefingVideo, error) {
+	const q = `
+		SELECT briefing_kind, video_url FROM public.briefing_videos
+		WHERE course_id = $1::uuid
+		ORDER BY briefing_kind
+	`
+	rows, err := r.pool.Query(ctx, q, courseID)
+	if err != nil {
+		return nil, fmt.Errorf("list briefing videos: %w", err)
+	}
+	defer rows.Close()
+	out := make([]BriefingVideo, 0)
+	for rows.Next() {
+		var v BriefingVideo
+		if err := rows.Scan(&v.BriefingKind, &v.VideoURL); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (r *postgresRepository) GetBriefingVideo(ctx context.Context, courseID, kind string) (string, error) {
+	const q = `SELECT video_url FROM public.briefing_videos WHERE course_id = $1::uuid AND briefing_kind = $2`
+	var url string
+	err := r.pool.QueryRow(ctx, q, courseID, kind).Scan(&url)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return url, err
+}
+
+func (r *postgresRepository) DeleteBriefingVideo(ctx context.Context, courseID, kind string) (string, error) {
+	const q = `
+		DELETE FROM public.briefing_videos
+		WHERE course_id = $1::uuid AND briefing_kind = $2
+		RETURNING video_path
+	`
+	var path string
+	err := r.pool.QueryRow(ctx, q, courseID, kind).Scan(&path)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", pgx.ErrNoRows
+	}
+	return path, err
+}
+
+func (r *postgresRepository) SetCourseBriefingFlag(ctx context.Context, courseID string, value bool) error {
+	const q = `UPDATE public.courses SET is_briefing_course = $2, updated_at = NOW() WHERE id = $1::uuid`
+	_, err := r.pool.Exec(ctx, q, courseID, value)
+	if err != nil {
+		return fmt.Errorf("set course briefing flag: %w", err)
+	}
+	return nil
+}
+
+func (r *postgresRepository) CourseIsBriefing(ctx context.Context, courseID string) (bool, error) {
+	const q = `SELECT is_briefing_course FROM public.courses WHERE id = $1::uuid`
+	var ok bool
+	err := r.pool.QueryRow(ctx, q, courseID).Scan(&ok)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return ok, err
+}
+
+func (r *postgresRepository) OrgAdminHasCourse(ctx context.Context, orgAdminID, courseID string) (bool, error) {
+	const q = `
+		SELECT EXISTS (
+			SELECT 1 FROM public.course_assignments
+			WHERE user_id = $1::uuid AND course_id = $2::uuid
+		)
+	`
+	var ok bool
+	err := r.pool.QueryRow(ctx, q, orgAdminID, courseID).Scan(&ok)
+	return ok, err
+}
+
+func (r *postgresRepository) ListBriefingCoursesForOrgAdmin(ctx context.Context, orgAdminID string) ([]BriefingCourse, error) {
+	const q = `
+		SELECT c.id::text, c.title,
+		       COALESCE(ARRAY_AGG(bv.briefing_kind ORDER BY bv.briefing_kind)
+		                FILTER (WHERE bv.briefing_kind IS NOT NULL), '{}') AS kinds
+		FROM public.course_assignments ca
+		JOIN public.courses c ON c.id = ca.course_id
+		LEFT JOIN public.briefing_videos bv ON bv.course_id = c.id
+		WHERE ca.user_id = $1::uuid AND c.is_briefing_course = TRUE
+		GROUP BY c.id, c.title
+		ORDER BY c.title
+	`
+	rows, err := r.pool.Query(ctx, q, orgAdminID)
+	if err != nil {
+		return nil, fmt.Errorf("list briefing courses: %w", err)
+	}
+	defer rows.Close()
+	out := make([]BriefingCourse, 0)
+	for rows.Next() {
+		var bc BriefingCourse
+		if err := rows.Scan(&bc.CourseID, &bc.Title, &bc.Kinds); err != nil {
+			return nil, err
+		}
+		out = append(out, bc)
 	}
 	return out, rows.Err()
 }

@@ -102,6 +102,11 @@ func Register(e *echo.Echo, deps Deps) {
 	adminFn.POST("/lessons/:id/quiz", deps.Quizzes.Upload)
 	adminFn.DELETE("/lessons/:id/quiz", deps.Quizzes.Delete)
 
+	// Fire-safety briefing videos (per course / kind)
+	adminFn.GET("/courses/:courseId/briefing-videos", deps.Briefings.ListBriefingVideos)
+	adminFn.POST("/courses/:courseId/briefing-videos", deps.Briefings.UploadBriefingVideo)
+	adminFn.DELETE("/courses/:courseId/briefing-videos/:kind", deps.Briefings.DeleteBriefingVideo)
+
 	adminFn.GET("/materials", deps.Materials.List)
 	adminFn.POST("/materials", deps.Materials.Upload)
 	adminFn.DELETE("/materials/:id", deps.Materials.Delete)
@@ -142,11 +147,13 @@ func Register(e *echo.Echo, deps Deps) {
 	orgAdminFn.GET("/briefing-records", deps.Briefings.ListOrgRecords)
 	orgAdminFn.PATCH("/briefing-records/:id/sign", deps.Briefings.SignRecord)
 	orgAdminFn.DELETE("/briefing-records/:id", deps.Briefings.DeleteRecord)
+	orgAdminFn.GET("/briefing-courses", deps.Briefings.ListBriefingCourses)
 
 	// Employee briefings
 	employeeFn.GET("/events", deps.Briefings.ListEmployeeEvents)
 	employeeFn.GET("/briefings", deps.Briefings.ListEmployeeBriefings)
-	employeeFn.POST("/briefings/:eventId/confirm", deps.Briefings.ConfirmBriefing)
+	employeeFn.GET("/briefings/:eventId", deps.Briefings.GetEmployeeBriefing)
+	employeeFn.POST("/briefings/:eventId/complete", deps.Briefings.CompleteBriefing)
 	employeeFn.GET("/journal-records", deps.Briefings.ListEmployeeJournalRecords)
 
 	// AI analytics (org-admin scope)

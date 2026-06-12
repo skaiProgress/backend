@@ -12,27 +12,14 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// BriefingScheduler is a minimal interface that orgadmin uses to trigger
-// briefing automation without importing the full briefings package (avoids cycles).
-type BriefingScheduler interface {
-	ScheduleIntroductoryBriefing(ctx context.Context, orgID, employeeID, employeeName, orgAdminID string) error
-}
-
 // Service handles org-admin cabinet logic.
 type Service struct {
-	repo      Repository
-	briefings BriefingScheduler
+	repo Repository
 }
 
 // NewService creates an org-admin service.
 func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
-}
-
-// SetBriefingScheduler injects the briefing scheduler after construction
-// to avoid import cycles.
-func (s *Service) SetBriefingScheduler(bs BriefingScheduler) {
-	s.briefings = bs
 }
 
 func (s *Service) orgContext(ctx context.Context) (*OrgContext, error) {
@@ -108,6 +95,13 @@ func (s *Service) CreateMember(ctx context.Context, req CreateMemberRequest) (*C
 		isActive = *req.IsActive
 	}
 
+	var position *string
+	if req.Position != nil {
+		if p := strings.TrimSpace(*req.Position); p != "" {
+			position = &p
+		}
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
@@ -118,22 +112,8 @@ func (s *Service) CreateMember(ctx context.Context, req CreateMemberRequest) (*C
 		return nil, err
 	}
 
-	if err := s.repo.UpsertMemberProfile(ctx, userID, email, oc.OrganizationID, req.FullName, isActive); err != nil {
+	if err := s.repo.UpsertMemberProfile(ctx, userID, email, oc.OrganizationID, req.FullName, position, isActive); err != nil {
 		return nil, err
-	}
-
-	// Auto-schedule introductory briefing for the new employee.
-	if s.briefings != nil {
-		empName := email
-		if req.FullName != nil && *req.FullName != "" {
-			empName = *req.FullName
-		}
-		// Run in background so member creation succeeds even if scheduling fails.
-		go func() {
-			_ = s.briefings.ScheduleIntroductoryBriefing(
-				context.Background(), oc.OrganizationID, userID, empName, oc.UserID,
-			)
-		}()
 	}
 
 	return &CreateMemberResponse{UserID: userID}, nil

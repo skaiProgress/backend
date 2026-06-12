@@ -17,7 +17,7 @@ type Repository interface {
 	GetStats(ctx context.Context, orgID, orgAdminUserID string) (*Stats, error)
 	ListMembers(ctx context.Context, orgID string) ([]Member, error)
 	CreateAuthUser(ctx context.Context, email, passwordHash string) (string, error)
-	UpsertMemberProfile(ctx context.Context, userID, email, orgID string, fullName *string, isActive bool) error
+	UpsertMemberProfile(ctx context.Context, userID, email, orgID string, fullName *string, position *string, isActive bool) error
 	MemberInOrg(ctx context.Context, orgID, userID string) (bool, error)
 	OrgAdminHasCourse(ctx context.Context, orgAdminUserID, courseID string) (bool, error)
 	ListMyCourses(ctx context.Context, orgAdminUserID, orgID string) ([]Course, error)
@@ -103,7 +103,7 @@ func (r *postgresRepository) GetStats(ctx context.Context, orgID, orgAdminUserID
 
 func (r *postgresRepository) ListMembers(ctx context.Context, orgID string) ([]Member, error) {
 	const q = `
-		SELECT id::text, COALESCE(email, ''), full_name, role, is_active, created_at
+		SELECT id::text, COALESCE(email, ''), full_name, position, role, is_active, created_at
 		FROM public.profiles
 		WHERE organization_id = $1::uuid AND role = 'user'
 		ORDER BY created_at DESC
@@ -117,7 +117,7 @@ func (r *postgresRepository) ListMembers(ctx context.Context, orgID string) ([]M
 	out := make([]Member, 0)
 	for rows.Next() {
 		var m Member
-		if err := rows.Scan(&m.ID, &m.Email, &m.FullName, &m.Role, &m.IsActive, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Email, &m.FullName, &m.Position, &m.Role, &m.IsActive, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -156,19 +156,21 @@ func (r *postgresRepository) UpsertMemberProfile(
 	ctx context.Context,
 	userID, email, orgID string,
 	fullName *string,
+	position *string,
 	isActive bool,
 ) error {
 	const q = `
-		INSERT INTO public.profiles (id, email, full_name, role, is_active, organization_id)
-		VALUES ($1::uuid, $2, $3, 'user', $4, $5::uuid)
+		INSERT INTO public.profiles (id, email, full_name, position, role, is_active, organization_id)
+		VALUES ($1::uuid, $2, $3, $4, 'user', $5, $6::uuid)
 		ON CONFLICT (id) DO UPDATE SET
 			email = EXCLUDED.email,
 			full_name = EXCLUDED.full_name,
+			position = EXCLUDED.position,
 			is_active = EXCLUDED.is_active,
 			organization_id = EXCLUDED.organization_id,
 			updated_at = NOW()
 	`
-	_, err := r.pool.Exec(ctx, q, userID, email, fullName, isActive, orgID)
+	_, err := r.pool.Exec(ctx, q, userID, email, fullName, position, isActive, orgID)
 	if err != nil {
 		return fmt.Errorf("upsert member profile: %w", err)
 	}

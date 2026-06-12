@@ -25,6 +25,7 @@ type Member struct {
 	ID        string    `json:"id"`
 	Email     string    `json:"email"`
 	FullName  *string   `json:"full_name"`
+	Position  *string   `json:"position"`
 	Role      string    `json:"role"`
 	IsActive  bool      `json:"is_active"`
 	CreatedAt time.Time `json:"created_at"`
@@ -35,6 +36,7 @@ type CreateMemberRequest struct {
 	Email    string  `json:"email"`
 	Password string  `json:"password"`
 	FullName *string `json:"full_name"`
+	Position *string `json:"position"`
 	IsActive *bool   `json:"is_active"`
 }
 

@@ -84,6 +84,31 @@ func (s *Local) SaveLessonVideo(courseID, originalName string, r io.Reader) (pub
 	return publicURL, relPath, nil
 }
 
+// SaveBriefingVideo stores a fire-safety briefing video for a course/kind.
+func (s *Local) SaveBriefingVideo(courseID, kind, originalName string, r io.Reader) (publicURL, relPath string, err error) {
+	safeName := safeObjectName(originalName)
+	relPath = filepath.ToSlash(filepath.Join("videos", "briefings", courseID, kind, safeName))
+	absPath := filepath.Join(s.rootDir, relPath)
+
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		return "", "", err
+	}
+
+	f, err := os.Create(absPath)
+	if err != nil {
+		return "", "", err
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, r); err != nil {
+		_ = os.Remove(absPath)
+		return "", "", err
+	}
+
+	publicURL = fmt.Sprintf("%s/files/%s", s.baseURL, relPath)
+	return publicURL, relPath, nil
+}
+
 // SaveAvatar stores a profile avatar and returns public URL + relative path.
 func (s *Local) SaveAvatar(userID, originalName string, r io.Reader) (publicURL, relPath string, err error) {
 	safeName := safeObjectName(originalName)

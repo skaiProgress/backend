@@ -57,12 +57,17 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Course, error
 		return nil, errors.New("invalid status")
 	}
 	uid := claims.Subject
+	isBriefing := false
+	if req.IsBriefingCourse != nil {
+		isBriefing = *req.IsBriefingCourse
+	}
 	return s.repo.Create(ctx, Course{
-		Title:       title,
-		Description: req.Description,
-		Status:      status,
-		CoverURL:    req.CoverURL,
-		CreatedBy:   &uid,
+		Title:            title,
+		Description:      req.Description,
+		Status:           status,
+		CoverURL:         req.CoverURL,
+		CreatedBy:        &uid,
+		IsBriefingCourse: isBriefing,
 	})
 }
 
@@ -90,6 +95,9 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*Co
 	}
 	if req.CoverURL != nil {
 		fields["cover_url"] = *req.CoverURL
+	}
+	if req.IsBriefingCourse != nil {
+		fields["is_briefing_course"] = *req.IsBriefingCourse
 	}
 	out, err := s.repo.Update(ctx, id, fields)
 	if err != nil {
