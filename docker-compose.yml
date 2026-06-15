@@ -29,7 +29,13 @@ services:
     ports:
       # Хост-порт снаружи контейнера (внутри API всегда 8080). Если 8080 занят — задайте BACKEND_HOST_PORT=8081 в .env
       - "${BACKEND_HOST_PORT:-8080}:8080"
+    # Пробрасываем весь .env (рядом с этим файлом) внутрь контейнера.
+    # Так OpenAI-ключ попадает в контейнер независимо от регистра имени
+    # (OPENAI_API_KEY или OpenAI_API_KEY — Go-код читает оба, см. internal/ai/openai.go).
+    env_file:
+      - .env
     environment:
+      # Значения ниже имеют приоритет над env_file и фиксируют параметры для запуска в Docker Compose.
       PORT: "8080"
       APP_ENV: development
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/aiqadam?sslmode=disable
@@ -40,9 +46,7 @@ services:
       MIGRATIONS_PATH: /app/migrations
       STORAGE_PATH: /app/storage
       PUBLIC_API_URL: http://localhost:${BACKEND_HOST_PORT:-8080}
-      # OpenAI для AI-аналитики (берётся из .env в папке backend)
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-${OpenAI_API_KEY:-}}
-      OpenAI_API_KEY: ${OpenAI_API_KEY:-}
+      # OpenAI-ключ берётся из env_file (.env). Модель можно переопределить переменной OPENAI_MODEL.
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
     volumes:
       - aiqadam_backend_storage:/app/storage
